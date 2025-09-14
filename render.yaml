@@ -11,4 +11,4 @@ services:
         value: https://pse.pwm435.space
       - key: NODE_ENV
         value: production
-    healthCheckPath: /3co
+    healthCheckPath: /healthcheck
