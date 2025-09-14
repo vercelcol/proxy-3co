@@ -199,8 +199,8 @@ const proxyOptions = {
   onProxyReq: (proxyReq, req) => {
     const userDomain = req.get('host') || 'unknown.onrender.com';
     const userIp = req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.connection.remoteAddress || 'unknown';
-    proxyReq.setHeader('user_domain', userDomain);
-    proxyReq.setHeader('user_ip', String(userIp).split(',')[0].trim());
+    proxyReq.setHeader('user-domain', userDomain);
+    proxyReq.setHeader('user-ip', String(userIp).split(',')[0].trim());
 
     // Eliminar headers que pueden revelar el proxy
     proxyReq.removeHeader('x-forwarded-for');
