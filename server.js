@@ -12,7 +12,7 @@ const TARGET_HOST = (() => { try { return new URL(TARGET_URL).host; } catch { re
 const ALLOWED_PATHS = ['/3co', '/3co/tarjetavirtual'];
 
 // Rutas API específicas solicitadas
-const API_ALLOWED_PATHS = ['/pago/status', '/tarjeta/status', '/bancos'];
+const API_ALLOWED_PATHS = ['/api/pago/status', '/api/tarjeta/status', '/api/bancos'];
 
 // Prefijos estáticos permitidos (ampliados)
 const STATIC_PREFIXES = [
