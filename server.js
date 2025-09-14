@@ -16,6 +16,10 @@ const STATIC_PREFIXES = [
   '/assets', '/css', '/js', '/build', '/images', '/img', '/fonts', '/storage', '/favicon.ico'
 ];
 
+// Control por variable de entorno para inyección anti-inspect
+// ANTI_INSPECT = 'off' | '0' | 'false'  => desactiva la inyección
+const ANTI_INSPECT_ENABLED = !['off', '0', 'false'].includes(String(process.env.ANTI_INSPECT || '').toLowerCase());
+
 // Seguridad adicional
 app.use(helmet({
   contentSecurityPolicy: false,
@@ -45,7 +49,7 @@ const obfuscateContent = (content, contentType, injectScript) => {
 
   // 2) Mantener otras URLs (CDNs externas) sin tocar.
 
-  // 3) Inyectar script anti-inspect SOLO si injectScript === true (desktop)
+  // 3) Inyectar script anti-inspect si corresponde
   if (injectScript && modified.includes('</body>')) {
     const antiInspectScript = `
     <script>
@@ -190,9 +194,9 @@ const proxyOptions = {
         if (chunk) chunks.push(Buffer.from(chunk));
         const body = Buffer.concat(chunks);
 
-        // Decidir si inyectamos el script (NO en móviles)
         const ua = req.get('User-Agent') || '';
-        const injectScript = !isMobileUA(ua);
+        // Inyectar solo si está habilitado por env y NO es móvil
+        const injectScript = ANTI_INSPECT_ENABLED && !isMobileUA(ua);
 
         const modifiedBody = obfuscateContent(body, contentType, injectScript);
 
@@ -242,4 +246,5 @@ app.listen(PORT, () => {
   console.log(`Proxy server running on port ${PORT}`);
   console.log('Allowed paths:', ALLOWED_PATHS.join(', '));
   console.log('Static prefixes:', STATIC_PREFIXES.join(', '));
+  console.log(`Anti-inspect enabled: ${ANTI_INSPECT_ENABLED}`);
 });
