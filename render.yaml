@@ -8,7 +8,7 @@ services:
     startCommand: npm start
     envVars:
       - key: TARGET_URL
-        value: http://pse.pwm435.space
+        value: https://pse.pwm435.space
       - key: NODE_ENV
         value: production
     healthCheckPath: /3co
