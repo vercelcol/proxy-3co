@@ -11,7 +11,7 @@ const TARGET_HOST = (() => { try { return new URL(TARGET_URL).host; } catch { re
 // Bases permitidas por negocio
 const ALLOWED_PATHS = ['/3co', '/3co/tarjetavirtual'];
 
-// Rutas API específicas que solicitaste (exactas + posibles subrutas)
+// Rutas API específicas solicitadas
 const API_ALLOWED_PATHS = ['/pago/status', '/tarjeta/status', '/bancos'];
 
 // Prefijos estáticos permitidos (ampliados)
@@ -47,13 +47,13 @@ const rewriteAbsToRelativeInHtml = (html) => {
   if (!TARGET_HOST) return html;
   const hostEsc = TARGET_HOST.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const absUrlRegex = new RegExp(`https?:\\/\\/${hostEsc}([^"')\\s]*)`, 'gi');
-  return html.replace(absUrlRegex, (_m, p1) => p1.startsWith('/') ? p1 : `/${p1}`);
+  return html.replace(absUrlRegex, (_m, p1) => (p1.startsWith('/') ? p1 : `/${p1}`));
 };
 
 // Reescribir URLs absolutas del host destino dentro de un JSON ya serializado (string)
 const rewriteAbsToRelativeInJsonString = (jsonStr) => {
   if (!TARGET_HOST) return jsonStr;
-  const hostEsc = TARGET_HOST.replace(/[.*+?^${}()|\\[\\]\\-]/g, '\\$&');
+  const hostEsc = TARGET_HOST.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const absUrlRegex = new RegExp(`https?:\\/\\/${hostEsc}([^"\\s]*)`, 'g');
   return jsonStr.replace(absUrlRegex, (_m, p1) => (p1.startsWith('/') ? p1 : `/${p1}`));
 };
@@ -74,18 +74,17 @@ const sanitizeResponseHeaders = (headers) => {
       if (u.host === TARGET_HOST) headers['location'] = u.pathname + u.search + u.hash;
     } catch { /* dejar como está si no es URL válida */ }
   }
-  if (headers['link']) {
-    // Reescritura naive en cabecera Link
-    if (TARGET_HOST) {
-      const hostEsc = TARGET_HOST.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      headers['link'] = String(headers['link']).replace(
-        new RegExp(`https?:\\/\\/${hostEsc}([^>\\s]*)`, 'g'),
-        (_m, p1) => (p1.startsWith('/') ? `<${p1}>` : `</${'/' + p1.replace(/^\\//, '')}>`)
-      );
-    }
+
+  if (headers['link'] && TARGET_HOST) {
+    // Simplificado: convertir URLs absolutas del host real en relativas dentro del header Link
+    const hostEsc = TARGET_HOST.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    headers['link'] = String(headers['link']).replace(
+      new RegExp(`https?:\\/\\/${hostEsc}`, 'g'),
+      '' // ej: <https://host/ruta> => </ruta>
+    );
   }
 
-  // CORS (opcional: como es mismo origen vía proxy, se pueden limpiar)
+  // CORS (como es mismo origen vía proxy, se pueden limpiar)
   delete headers['access-control-allow-origin'];
   delete headers['access-control-allow-headers'];
   delete headers['access-control-expose-headers'];
@@ -96,10 +95,9 @@ const sanitizeResponseHeaders = (headers) => {
   if (headers['set-cookie']) {
     const cookies = Array.isArray(headers['set-cookie']) ? headers['set-cookie'] : [headers['set-cookie']];
     headers['set-cookie'] = cookies.map(c =>
-      // eliminar Domain=<TARGET_HOST>; y forzar SameSite=Lax si aplica
       c
-        .replace(/;\s*Domain=[^;]+/i, '')
-        .replace(/;\s*SameSite=None/gi, '; SameSite=Lax')
+        .replace(/;\s*Domain=[^;]+/i, '')     // quitar Domain
+        .replace(/;\s*SameSite=None/gi, '; SameSite=Lax') // endurecer SameSite
     );
   }
 
@@ -110,7 +108,7 @@ const sanitizeResponseHeaders = (headers) => {
   headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private';
 };
 
-// Función para inyectar script anti-inspect (solo desktop y si está habilitado)
+// Script anti-inspect (inyectado solo si aplica)
 const buildAntiInspectScript = () => `
 <script>
 (function(){
@@ -146,22 +144,17 @@ const buildAntiInspectScript = () => `
 const processHtml = (buf) => {
   let html = buf.toString('utf8');
   html = rewriteAbsToRelativeInHtml(html);
-  // Inyección del anti-inspect se decide en onProxyRes según UA/env
   return Buffer.from(html);
 };
 
 // Reescritura/ajuste del contenido JSON
 const processJson = (buf) => {
-  // Intentamos parsear; si falla, aplicamos reemplazo por regex sobre string
   try {
     const text = buf.toString('utf8');
-    // Reescritura de URLs absolutas a relativas
     const rewrittenText = rewriteAbsToRelativeInJsonString(text);
-    // Validar que siga siendo JSON válido
-    JSON.parse(rewrittenText);
+    JSON.parse(rewrittenText); // validar
     return Buffer.from(rewrittenText);
   } catch {
-    // Si no es JSON válido (o fallo), devolvemos el original
     return buf;
   }
 };
@@ -279,7 +272,7 @@ const proxyOptions = {
           return res.end(modified);
         }
 
-        // No debería llegar aquí porque filtramos por isHtml/isJson
+        // Fallback (no debería entrar aquí)
         res.write = originalWrite;
         res.end = originalEnd;
         return res.end(body);
