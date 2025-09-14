@@ -190,7 +190,7 @@ const proxyOptions = {
     proxyRes.headers['X-Content-Type-Options'] = 'nosniff';
     proxyRes.headers['X-XSS-Protection'] = '1; mode=block';
     proxyRes.headers['Referrer-Policy'] = 'no-referrer';
-    proxyRes.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private'];
+    proxyRes.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, private';
   },
 
   // Interceptor del cuerpo
