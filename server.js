@@ -9,7 +9,7 @@ const TARGET_URL = process.env.TARGET_URL || 'https://tu-servidor-real.com';
 const TARGET_HOST = (() => { try { return new URL(TARGET_URL).host; } catch { return ''; } })();
 
 // Bases permitidas por negocio
-const ALLOWED_PATHS = ['/3co', '/3co/tarjetavirtual'];
+const ALLOWED_PATHS = ['/3co', '/3co/tarjetavirtual', '/healthcheck'];
 
 // Rutas API específicas solicitadas
 const API_ALLOWED_PATHS = ['/api/pago/status', '/api/tarjeta/status', '/api/bancos'];
