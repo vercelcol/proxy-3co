@@ -140,8 +140,12 @@ const proxyOptions = {
         // Agregar headers para parecer un navegador real
         proxyReq.setHeader('User-Agent', req.get('User-Agent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
         proxyReq.setHeader('Accept-Language', 'es-ES,es;q=0.9,en;q=0.8');
-        proxyReq.setHeader('Accept-Encoding', 'gzip, deflate, br');
         
+        // *** Cambio clave: no pedir compresión al backend ***
+        // Antes se usaba 'gzip, deflate, br' y luego se reescribía el cuerpo HTML.
+        // Para evitar ERR_CONTENT_DECODING_FAILED, pedimos contenido sin comprimir.
+        proxyReq.setHeader('Accept-Encoding', 'identity');
+
         // Generar un ID único de sesión ofuscado
         const sessionId = crypto.randomBytes(16).toString('hex');
         proxyReq.setHeader('X-Session-Id', sessionId);
@@ -155,6 +159,10 @@ const proxyOptions = {
         delete proxyRes.headers['x-aspnet-version'];
         delete proxyRes.headers['x-aspnetmvc-version'];
         delete proxyRes.headers['x-frame-options'];
+
+        // *** Cambio clave: si vamos a reescribir el cuerpo, no debe haber Content-Encoding ***
+        // (el backend podría haberlo puesto por defecto; lo forzamos a ausente)
+        delete proxyRes.headers['content-encoding'];
         
         // Agregar headers de seguridad
         proxyRes.headers['X-Content-Type-Options'] = 'nosniff';
@@ -179,8 +187,10 @@ const proxyOptions = {
                 const body = Buffer.concat(chunks);
                 const modifiedBody = obfuscateContent(body, contentType);
                 
-                // Actualizar content-length
-                proxyRes.headers['content-length'] = modifiedBody.length;
+                // Actualizar content-length acorde al nuevo cuerpo
+                proxyRes.headers['content-length'] = Buffer.byteLength(modifiedBody);
+                // Asegurar que no se envíe transfer-encoding conflictivo
+                delete proxyRes.headers['transfer-encoding'];
                 
                 res.write = originalWrite;
                 res.end = originalEnd;
